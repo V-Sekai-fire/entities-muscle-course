@@ -4,3 +4,5 @@ builds/
 data_*/
 .DS_Store
 *.app/
+*.elf
+build/
