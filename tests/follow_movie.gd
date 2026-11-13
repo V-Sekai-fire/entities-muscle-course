@@ -1,32 +1,24 @@
+## Explained in docs/follow.md.
 extends SceneTree
 
-## Recording, not a gate: the avatar following the muscle skeleton through a clip, seen from the
-## Hammersley orbit views one after another. It needs a window and the movie writer:
-##   godot --path . --resolution 1280x720 --write-movie <out.mov> --fixed-fps 30 -s tests/follow_movie.gd -- <mujoco.elf> <anny_base.glb> <clip.f64> [label] [--shots=<dir>]
-## The clip is raw float64, 86 per frame, 100 frames a second, and loops. Each view is held for
-## HOLD seconds, so the recording is VIEWS * HOLD seconds long. The dots are the origins of the 21
-## driving bodies of the muscle skeleton, drawn through the skin. --shots saves one still per view.
-## Views: sphere_hammersley_sequence(i, N), offset 0, no remap: pitch = acos(1 - 2 i / N) - pi / 2,
-## yaw = 2 pi * the base-2 radical inverse of i; view 0 is straight below. Z up there is Y up here.
-
 const Rig := preload("res://tests/follow_rig.gd")
+const CLIPS := ["walk", "idle"]
 const VIEWS := 8
 const HOLD := 2.0
-const FPS := 30
+const FPS := 32
+const TICK_HZ := 64
 const CLIP_HZ := 100.0
-const DISTANCE := 3.0
+const RADIUS := 3.0
 const FOCUS_HEIGHT := 0.9
 
 var rig: Rig
-var qpos := PackedFloat64Array()
-var frames := 0
-var tick := -1
+var clips: Array[PackedFloat64Array] = []
+var frame := -1
 var cam: Camera3D
 var dots: Array[MeshInstance3D] = []
 var dot_bodies := PackedInt32Array()
 var caption: Label
-var label := ""
-var shots := ""
+var control := ""
 var worst_root := 0.0
 
 
@@ -52,6 +44,21 @@ func _end(line: String, code: int) -> void:
 	quit(code)
 
 
+func _qpos(q: PackedFloat64Array, t: float) -> PackedFloat64Array:
+	var count: int = q.size() / 86
+	var f: float = fmod(t * CLIP_HZ, float(count - 1))
+	var i: int = mini(int(f), count - 2)
+	var w: float = f - i
+	var out := PackedFloat64Array()
+	out.resize(86)
+	for k in 86:
+		out[k] = lerpf(q[i * 86 + k], q[(i + 1) * 86 + k], w)
+	var len := sqrt(out[3] * out[3] + out[4] * out[4] + out[5] * out[5] + out[6] * out[6])
+	for k in range(3, 7):
+		out[k] /= len
+	return out
+
+
 func _grid() -> MeshInstance3D:
 	var im := ImmediateMesh.new()
 	var mat := StandardMaterial3D.new()
@@ -69,23 +76,32 @@ func _grid() -> MeshInstance3D:
 	return mi
 
 
+func _light(degrees: Vector3, energy: float) -> void:
+	var light := DirectionalLight3D.new()
+	light.rotation_degrees = degrees
+	light.light_energy = energy
+	root.add_child(light)
+
+
 func _initialize() -> void:
 	var a := OS.get_cmdline_user_args()
 	if a.size() < 3:
-		_end("RESULT: FAIL usage: -- <mujoco.elf> <anny_base.glb> <clip.f64> [label] [--shots=<dir>]", 1)
+		_end("RESULT: FAIL usage: -- <mujoco.elf> <anny_base.glb> <clips dir> [--control=swap]", 1)
 		return
 	for x in a.slice(3):
-		if x.begins_with("--shots="):
-			shots = x.trim_prefix("--shots=")
+		if x == "--control=swap":
+			control = "swap"
 		else:
-			label = x
-	qpos = FileAccess.get_file_as_bytes(a[2]).to_float64_array()
-	frames = qpos.size() / 86
-	if frames == 0 or qpos.size() != frames * 86:
-		_end("RESULT: FAIL %s is not rows of 86 float64" % a[2], 1)
-		return
+			_end("RESULT: FAIL unknown argument %s" % x, 1)
+			return
+	for name in CLIPS:
+		var q := FileAccess.get_file_as_bytes(a[2].path_join(name + ".f64")).to_float64_array()
+		if q.size() < 172 or q.size() % 86 != 0:
+			_end("RESULT: FAIL clip %s is not rows of 86 float64" % name, 1)
+			return
+		clips.append(q)
 	rig = Rig.new()
-	if not rig.build(a[0], a[1], ""):
+	if not rig.build(a[0], a[1], control):
 		_end("RESULT: FAIL " + rig.error, 1)
 		return
 	var env := Environment.new()
@@ -97,14 +113,8 @@ func _initialize() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	root.add_child(we)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50, 35, 0)
-	sun.light_energy = 0.7
-	root.add_child(sun)
-	var fill := DirectionalLight3D.new()
-	fill.rotation_degrees = Vector3(55, -145, 0)
-	fill.light_energy = 0.25
-	root.add_child(fill)
+	_light(Vector3(-50, 35, 0), 0.7)
+	_light(Vector3(55, -145, 0), 0.25)
 	root.add_child(_grid())
 	root.add_child(rig.scene)
 	cam = Camera3D.new()
@@ -138,24 +148,29 @@ func _initialize() -> void:
 	if not rig.skel.is_inside_tree():
 		_end("RESULT: FAIL the skeleton is not in the tree", 1)
 		return
-	tick = 0
+	frame = 0
 
 
 func _process(_delta: float) -> bool:
-	if tick < 0:
+	if frame < 0:
 		return false
-	var total := int(VIEWS * HOLD * FPS)
-	if tick >= total:
-		print("VIDEO %s: %d frames written, %d views; hip midpoint off the femur midpoint by at most %s m" % [label, tick, VIEWS, String.num_scientific(worst_root)])
+	var per_view := int(HOLD * FPS)
+	var per_clip := VIEWS * per_view
+	if frame >= per_clip * CLIPS.size():
+		print("VIDEO mapping=%s frames=%d fps=%d ticks=%d clips=%s views=%d hold=%.1f radius=%.1f worst root %s m" % [control if control != "" else "real", frame, FPS, frame * TICK_HZ / FPS, "+".join(CLIPS), VIEWS, HOLD, RADIUS, String.num_scientific(worst_root)])
 		print("RESULT: PASS recorded")
 		quit(0)
 		return true
-	var t := float(tick) / FPS
-	var f := int(round(t * CLIP_HZ)) % frames
-	var view := mini(int(t / HOLD), VIEWS - 1)
-	var now: PackedFloat64Array = rig.bodies_at(qpos.slice(f * 86, f * 86 + 86))
+	var clip: int = frame / per_clip
+	var local: int = frame % per_clip
+	var view: int = local / per_view
+	var now := PackedFloat64Array()
+	var ticks: int = TICK_HZ / FPS
+	for k in ticks:
+		var tick: int = local * ticks + k + 1
+		now = rig.bodies_at(_qpos(clips[clip], float(tick) / TICK_HZ))
 	if not rig.pose(now):
-		print("RESULT: FAIL the follower gave no pose at clip frame %d" % f)
+		print("RESULT: FAIL the follower gave no pose at frame %d" % frame)
 		quit(1)
 		return true
 	for i in dots.size():
@@ -165,15 +180,8 @@ func _process(_delta: float) -> bool:
 	worst_root = maxf(worst_root, (hip - femur).length())
 	var focus := Vector3(femur.x, FOCUS_HEIGHT, femur.z)
 	var dir := _view_dir(view)
-	var from := focus + dir * DISTANCE
+	var from := focus + dir * RADIUS
 	cam.transform = Transform3D(Basis.looking_at(focus - from, Vector3.UP if absf(dir.y) < 0.9 else Vector3(0, 0, 1)), from)
-	caption.text = "%s   view %d of %d   clip frame %d" % [label, view, VIEWS, f]
-	if shots != "" and tick % int(HOLD * FPS) == int(HOLD * FPS) / 2:
-		_shot(view)
-	tick += 1
+	caption.text = "%s   %s   view %d of %d" % ["swap (control)" if control == "swap" else "real", CLIPS[clip], view, VIEWS]
+	frame += 1
 	return false
-
-
-func _shot(view: int) -> void:
-	await RenderingServer.frame_post_draw
-	root.get_texture().get_image().save_png(shots.path_join("%s_view%d.png" % [label, view]))

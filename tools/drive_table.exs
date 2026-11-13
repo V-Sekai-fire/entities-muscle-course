@@ -1,8 +1,3 @@
-# Writes data/drive.tsv from the expanded DRIVE table of the reference script.
-#   elixir tools/drive_table.exs <drive_table.txt> data/drive.tsv
-# Input rows: anny_bone <tab> mujoco_body <tab> None | ('anny_from', 'anny_to', 'mj_from', 'mj_to').
-# Output rows are grouped by driving body in the wire's part order, so the order of first
-# appearance of the body column is that order. Inside a body the input order is kept.
 parts = ~w(head_neck hand_l hand_r pelvis lumbar5 thoracic12 thoracic1 clavicle_l humerus_l radius_l
            clavicle_r humerus_r radius_r femur_l tibia_l calcn_l toes_l femur_r tibia_r calcn_r toes_r)
 

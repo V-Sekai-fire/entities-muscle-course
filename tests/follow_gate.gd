@@ -1,20 +1,6 @@
+## Explained in docs/follow.md.
 extends SceneTree
 
-## Gate: the avatar's bones, posed through follow.sgd from the muscle skeleton in the physics guest,
-## against a reference made outside the engine (the reference script's own mapping, run through the
-## avatar model's own forward pass).
-##   godot --headless --path . -s tests/follow_gate.gd -- <mujoco.elf> <anny_base.glb> <reference dir> [--control=swap]
-## The verdict is the RESULT: line.
-## The reference directory holds bones.txt, parents.txt, bodies.txt, qpos0.f64, rest.f64 (per bone 9
-## rotation numbers by rows and 3 for the head), clips.tsv (name, frames) and per clip <name>.qpos.f64
-## (86 per frame) and <name>.poses.f64 (per frame and bone, 9 and 3 as in rest.f64). The reference is
-## Z up; (x, y, z) there is (x, z, -y) here.
-## For every frame of every clip, read from the engine's own Skeleton3D after the pose is set:
-##   turn   the angle between each bone's turn from rest here and in the reference
-##   head   the distance between each bone's head here and in the reference, both from the hip midpoint
-##   root   the distance of the hip midpoint from the midpoint of the two femur bodies' origins
-## Both sides are double precision, so the limits are far below anything a wrong mapping gives.
-## --control=swap hands the follower the table with left and right driving bodies exchanged: must FAIL.
 
 const Rig := preload("res://tests/follow_rig.gd")
 const TOL_TURN := 1e-9
@@ -32,12 +18,10 @@ func _lines(path: String) -> PackedStringArray:
 	return FileAccess.get_file_as_string(path).split("\n", false)
 
 
-## Reference (Z up) to here (Y up).
 func _vec(t: PackedFloat64Array, o: int) -> Vector3:
 	return Vector3(t[o], t[o + 2], -t[o + 1])
 
 
-## A reference rotation matrix M, 9 numbers by rows, as B M B^T with B the map of _vec.
 func _mat(t: PackedFloat64Array, o: int) -> Basis:
 	return Basis(
 		Vector3(t[o], t[o + 6], -t[o + 3]),
@@ -45,7 +29,6 @@ func _mat(t: PackedFloat64Array, o: int) -> Basis:
 		Vector3(-t[o + 1], -t[o + 7], t[o + 4]))
 
 
-## The angle of a rotation, exact for small angles too (acos of the w part is blind below 1e-8).
 func _angle(b: Basis) -> float:
 	var q := b.get_rotation_quaternion()
 	return 2.0 * atan2(Vector3(q.x, q.y, q.z).length(), absf(q.w))
@@ -76,7 +59,6 @@ func _initialize() -> void:
 		_end("RESULT: FAIL the skeleton is not in the tree, so the engine would not pose it", 1)
 		return
 
-	# The two sides must be the same skeletons before any pose is compared.
 	if rig.bodies != _lines(ref.path_join("bodies.txt")):
 		_end("RESULT: FAIL the guest's bodies are not the reference's", 1)
 		return

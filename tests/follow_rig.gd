@@ -1,8 +1,6 @@
+## Explained in docs/follow.md.
 extends RefCounted
 
-## Apparatus shared by the follow gate and the follow recording; it does not ship. It builds the
-## muscle skeleton in the physics guest, loads the avatar, reads data/drive.tsv, resolves its names
-## to indices and hands the tables to follow.sgd. `pose` then moves the engine's skeleton.
 
 const HIP_BONES := ["upperleg01.L", "upperleg01.R"]
 const HIP_BODIES := ["femur_l", "femur_r"]
@@ -40,7 +38,6 @@ func _swap_side(body: String) -> String:
 	return body
 
 
-## control "swap" hands the follower the table with left and right driving bodies exchanged.
 func build(elf: String, glb: String, control: String) -> bool:
 	physics = ClassDB.instantiate("Sandbox")
 	physics.set_memory_max(1024)
@@ -121,15 +118,12 @@ func build(elf: String, glb: String, control: String) -> bool:
 	return true
 
 
-## The 7 numbers of every body at this qpos, in MuJoCo's axes.
 func bodies_at(qpos: PackedFloat64Array) -> PackedFloat64Array:
 	physics.vmcall("mjc_set_qpos", qpos)
 	physics.vmcall("mjc_forward")
 	return physics.vmcall("mjc_bodies")
 
 
-## Poses the skeleton from the bodies. The skeleton must be inside the tree, or the engine does not
-## recompute its global poses. False when the follower gave no pose.
 func pose(now: PackedFloat64Array) -> bool:
 	var n := bones.size()
 	var t0 := Time.get_ticks_usec()
@@ -143,6 +137,5 @@ func pose(now: PackedFloat64Array) -> bool:
 	return true
 
 
-## A body's origin here: MuJoCo's (x, y, z) is (y, z, x) in the engine's axes.
 static func origin(now: PackedFloat64Array, body: int) -> Vector3:
 	return Vector3(now[body * 7 + 1], now[body * 7 + 2], now[body * 7])

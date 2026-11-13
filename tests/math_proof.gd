@@ -1,13 +1,6 @@
+## Explained in docs/follow.md.
 extends SceneTree
 
-## Proof, not a gate of the follower: which rotation math a SafeGDScript guest can do, and what it costs.
-##   godot --headless --path . -s tests/math_proof.gd [-- --control=flip]
-## Three guests compute the same things: one quaternion product, and a chain of N products each followed
-## by a normalisation. `float` uses only float locals and a PackedFloat64Array; `quat` uses Quaternion
-## values and their operators; `basis` uses Basis values. Each is compared with the host's Quaternion.
-## A chain longer than 100 steps also shows whether the limit of about 100 scoped values in one call
-## stops a loop that makes Quaternion or Basis values.
-## --control=flip changes one input component after the host has computed what it expects: must FAIL.
 
 const KINDS := ["float", "quat", "basis"]
 const CHAINS := [10, 90, 104, 400, 2000]

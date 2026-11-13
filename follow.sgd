@@ -1,25 +1,4 @@
-## The skinned avatar's bones follow the muscle skeleton. Mapping as data plus arithmetic: the host
-## hands over the tables once (`setup`) and then one array of body placements per pose (`pose`).
-##
-## Frames. The muscle skeleton is in MuJoCo's axes (Z up, faces +X, left is +Y). The avatar is in the
-## engine's (Y up, faces +Z, left is +X). A MuJoCo vector (x, y, z) is the engine's (y, z, x), and a
-## MuJoCo quaternion (w; x, y, z) is the engine's (w; y, z, x). `_at` and `_turn` are the only places
-## that know this.
-##
-## For an avatar bone c driven by body b, the bone's orientation in the skeleton's space is
-##   W_c = D_b * A_c * R_c
-## R_c is the bone's rest orientation, D_b = turn_b(pose) * turn_b(default pose)^-1 is how far the
-## body has turned from the muscle skeleton's default pose, and A_c is the smallest rotation that
-## takes the avatar's rest direction (head of `from` to head of `to`) onto the muscle skeleton's
-## default direction (origin of `from` to origin of `to`), or no rotation when the row names no pair.
-## A bone no row drives keeps its rest orientation against its parent. Only orientations are set:
-## every bone keeps its rest offset from its parent, so the avatar keeps its own bone lengths.
-## The root bone is then moved so the midpoint of the two hip joints lands on the muscle skeleton's.
-##
-## Chosen from tests/math_proof.gd: Quaternion and Vector3 values and their operators exist in the
-## guest and give the host's own numbers, at the cost of float arithmetic, so the tables are kept as
-## Arrays of them.
-
+## Explained in docs/follow.md.
 const ROW: int = 6
 const PLACE: int = 7
 
@@ -44,13 +23,6 @@ func _turn(t: PackedFloat64Array, o: int) -> Quaternion:
 	return Quaternion(t[o + 5], t[o + 6], t[o + 4], t[o + 3])
 
 
-## Tables, once. Returns 0, or a negative number naming what was refused.
-##   parents  one per bone; bone 0 is the only root (-1) and a parent comes before its children
-##   rest     7 per bone: head x, y, z and orientation x, y, z, w, in the skeleton's space at rest
-##   drive    6 per row: bone, body, bone from, bone to, body from, body to; the pair is -1 when absent
-##   zero     7 per body, as the physics guest gives them at its default pose: x, y, z, w, x, y, z
-##   hips     the two bones whose heads are the avatar's hip joints, then the two bodies whose
-##            origins are the muscle skeleton's
 func setup(parents: PackedInt32Array, rest: PackedFloat64Array, drive: PackedInt32Array, zero: PackedFloat64Array, hips: PackedInt32Array) -> int:
 	ready = false
 	var n: int = parents.size()
@@ -132,9 +104,6 @@ func setup(parents: PackedInt32Array, rest: PackedFloat64Array, drive: PackedInt
 	return 0
 
 
-## One pose. `bodies` is 7 per body as the physics guest gives them: x, y, z, w, x, y, z.
-## Returns 4 per bone, the bone's pose rotation against its parent as x, y, z, w, and then 3: the
-## root bone's pose position. Returns an empty array before `setup` or for a wrong body count.
 func pose(bodies: PackedFloat64Array) -> PackedFloat64Array:
 	var out: PackedFloat64Array = PackedFloat64Array()
 	if not ready or bodies.size() != body_count * PLACE:
