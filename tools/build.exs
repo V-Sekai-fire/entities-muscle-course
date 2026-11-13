@@ -17,13 +17,16 @@ defmodule Build do
     File.mkdir_p!(build)
 
     unless File.exists?(Path.join(build, "build.ninja")) do
-      run("cmake", ["-S", @root, "-B", build, "-G", "Ninja", "-DCMAKE_TOOLCHAIN_FILE=#{toolchain}", "-DWEFT_ROOT=#{weft}"])
+      run("cmake", ["-S", @root, "-B", build, "-G", "Ninja", "-DCMAKE_TOOLCHAIN_FILE=#{toolchain}", "-DWEFT_ROOT=#{weft}"] ++ extra_args())
     end
 
     run("cmake", ["--build", build, "--target", "vmc"])
     elf = File.read!(Path.join(build, "vmc.elf"))
     IO.puts("== vmc.elf: #{byte_size(elf)} bytes, sha256 #{Base.encode16(:crypto.hash(:sha256, elf), case: :lower)}")
   end
+
+  # Extra cmake flags, e.g. VMC_CMAKE_ARGS="-DLEAN_CORE=/path -DLEAN_IO_PATCHED=/path/io.cpp".
+  defp extra_args, do: String.split(System.get_env("VMC_CMAKE_ARGS") || "", " ", trim: true)
 
   defp run(cmd, args) do
     {_, code} = System.cmd(cmd, args, into: IO.stream(:stdio, :line), stderr_to_stdout: true)
