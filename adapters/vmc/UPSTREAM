@@ -1,3 +1,5 @@
 DigitOtter/godot-vmc-lib, MIT, master 0c1adf8 (last pushed 2024-06-17).
-Vmc/Decode.lean ports its vmc_receiver.cpp message handling. The upstream tree was removed
-from this repo; get it with: git clone https://github.com/DigitOtter/godot-vmc-lib
+Vmc/Decode.lean ports its vmc_receiver.cpp message handling. The upstream license is kept in
+LICENSE-godot-vmc-lib, byte for byte (git blob 59ee69d4); its copyright line still has upstream's
+"<year>" placeholder. The upstream tree was removed from this repo; get it with:
+git clone https://github.com/DigitOtter/godot-vmc-lib
