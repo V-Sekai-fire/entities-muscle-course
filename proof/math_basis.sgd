@@ -1,0 +1,26 @@
+func quat_mul(a: PackedFloat64Array) -> PackedFloat64Array:
+	var p: Basis = Basis(Quaternion(a[1], a[2], a[3], a[0]))
+	var q: Basis = Basis(Quaternion(a[5], a[6], a[7], a[4]))
+	var r: Quaternion = (p * q).get_rotation_quaternion()
+	var out: PackedFloat64Array = PackedFloat64Array()
+	out.resize(4)
+	out[0] = r.w
+	out[1] = r.x
+	out[2] = r.y
+	out[3] = r.z
+	return out
+
+
+func chain(a: PackedFloat64Array, n: int) -> PackedFloat64Array:
+	var p: Basis = Basis(Quaternion(a[1], a[2], a[3], a[0]))
+	var q: Basis = Basis(Quaternion(a[5], a[6], a[7], a[4]))
+	for i in n:
+		p = (p * q).orthonormalized()
+	var r: Quaternion = p.get_rotation_quaternion()
+	var out: PackedFloat64Array = PackedFloat64Array()
+	out.resize(4)
+	out[0] = r.w
+	out[1] = r.x
+	out[2] = r.y
+	out[3] = r.z
+	return out
