@@ -1,0 +1,127 @@
+# vmc.elf: the Lean decoder as a godot-sandbox guest, built from a clean runner.
+#
+# Jobs:
+#  lean  - `lake build`, the witness (RESULT: PASS) and its planted control (must exit 1). Fast.
+#  guest - builds the riscv64 Lean core from interactor-lean-guest (runtime-guest.patch, so no
+#          /dev/urandom), then vmc.elf, then tools/check_elf.exs and its planted controls. The Lean
+#          core build is the slow part (about an hour cold), so the build tree is cached by the pinned
+#          sibling commits and the Lean release.
+#
+# What this does NOT prove: that the guest runs. The real gate is tests/engine/run_vmc.gd in the double
+# editor, and no release publishes a Linux editor build the runner could download, so it stays a manual
+# run. A translated-vs-interpreted (bintr) check is the same gap. Until both exist this ELF is
+# an artifact for inspection, not for shipping.
+name: guest
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  LEAN_TOOLCHAIN: leanprover/lean4:v4.34.1
+jobs:
+  lean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan and the pinned Lean
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain "$LEAN_TOOLCHAIN"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: lean-toolchain matches the workflow
+        run: test "$(cat lean-toolchain)" = "$LEAN_TOOLCHAIN"
+      - name: Witness
+        run: |
+          lake build vmc_witness
+          .lake/build/bin/vmc_witness
+      - name: Planted control must fail
+        run: |
+          if .lake/build/bin/vmc_witness --control; then
+            echo "the planted wrong expectation passed: the witness cannot fail" >&2
+            exit 1
+          fi
+      - name: Refuse sorry, axiom and native_decide
+        run: |
+          if grep -nE '\bsorry\b|\baxiom\b|native_decide' Vmc/*.lean VmcWitness.lean; then exit 1; fi
+
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: weft/4-entities/obstacle-course
+      - name: Clone the siblings the guest builds against
+        run: |
+          set -e
+          clone() { # <repo> <path>
+            git clone --depth 1 "https://github.com/V-Sekai-fire/$1" "weft/$2"
+            echo "$1 $(git -C "weft/$2" rev-parse HEAD)" >> siblings.txt
+          }
+          clone contract-guest-runtime 2-contract/guest-runtime
+          clone repository-riscv64-sysroot 5-repository/riscv64-sysroot
+          clone interactor-lean-guest 3-interactor/lean-guest
+          cat siblings.txt
+      - name: Install elan and the pinned Lean
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain "$LEAN_TOOLCHAIN"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          manifest-path: weft/5-repository/riscv64-sysroot/pixi.toml
+      - name: Put the sysroot's clang and lld first, and check they can target riscv64
+        run: |
+          echo "$GITHUB_WORKSPACE/weft/5-repository/riscv64-sysroot/.pixi/envs/default/bin" >> "$GITHUB_PATH"
+          export PATH="$GITHUB_WORKSPACE/weft/5-repository/riscv64-sysroot/.pixi/envs/default/bin:$PATH"
+          clang++ --print-targets | grep -q riscv64
+      - name: apt packages
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build elixir patch
+      - name: Cache the Lean core build
+        uses: actions/cache@v4
+        with:
+          path: build/rv64
+          key: lean-core-${{ env.LEAN_TOOLCHAIN }}-${{ hashFiles('siblings.txt', 'CMakeLists.txt', 'lean-toolchain') }}
+      - name: Build vmc.elf
+        env:
+          WEFT_ROOT: ${{ github.workspace }}/weft
+          VMC_CMAKE_ARGS: -DLEAN_GUEST_DIR=${{ github.workspace }}/weft/3-interactor/lean-guest
+        working-directory: weft/4-entities/obstacle-course
+        run: |
+          export PATH="$GITHUB_WORKSPACE/weft/5-repository/riscv64-sysroot/.pixi/envs/default/bin:$PATH"
+          elixir tools/build.exs --build="$GITHUB_WORKSPACE/build/rv64"
+      - name: Shape gate
+        working-directory: weft/4-entities/obstacle-course
+        run: |
+          export PATH="$GITHUB_WORKSPACE/weft/5-repository/riscv64-sysroot/.pixi/envs/default/bin:$PATH"
+          elixir tools/check_elf.exs "$GITHUB_WORKSPACE/build/rv64/vmc.elf"
+      - name: Planted controls must fail
+        working-directory: weft/4-entities/obstacle-course
+        run: |
+          export PATH="$GITHUB_WORKSPACE/weft/5-repository/riscv64-sysroot/.pixi/envs/default/bin:$PATH"
+          if elixir tools/check_elf.exs --variant-size=24 "$GITHUB_WORKSPACE/build/rv64/vmc.elf"; then
+            echo "a single-precision check passed a double ELF: the gate cannot fail" >&2; exit 1
+          fi
+          cp "$GITHUB_WORKSPACE/build/rv64/vmc.elf" "$RUNNER_TEMP/plant.elf"
+          # Rewrite the marker's size byte (40 -> 24) in a copy; the gate must now reject it.
+          python3 - "$RUNNER_TEMP/plant.elf" <<'PY'
+          import sys
+          p = sys.argv[1]
+          b = bytearray(open(p, "rb").read())
+          i = b.index(b"SBXV")
+          assert b[i + 4] == 40
+          b[i + 4] = 24
+          open(p, "wb").write(b)
+          PY
+          if elixir tools/check_elf.exs "$RUNNER_TEMP/plant.elf"; then
+            echo "a 24-byte marker passed the double gate" >&2; exit 1
+          fi
+      - name: Upload the ELF
+        uses: actions/upload-artifact@v4
+        with:
+          name: vmc-elf-${{ github.sha }}
+          path: |
+            build/rv64/vmc.elf
+            siblings.txt
