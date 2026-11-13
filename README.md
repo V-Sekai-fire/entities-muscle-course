@@ -8,6 +8,8 @@ MS-Human-700 muscle skeleton too.
 - The motion-matching picker (`mm.elf`) picks a clip each frame from the
   player's input. MS-Human-700 runs inverse dynamics underneath on that motion,
   and the skinned avatar's bones follow its pose each tick.
+  The guest that does the following, `follow.sgd` with its drive table and gate, is the
+  repository `V-Sekai-fire/interactor-anny-follow-guest`.
 - MS-Human-700 runs inside the `mujoco.elf` godot-sandbox guest through a new
   `mjc_inverse` call, timed against the 15.625 ms (64 Hz) tick.
 - Live capture drives the `mm.elf` query: tracker poses are the matching
