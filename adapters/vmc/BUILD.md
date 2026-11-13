@@ -1,8 +1,8 @@
 # VMC adapter
 
 `vmc.elf` is a godot-sandbox guest. The decoder is `Vmc/Decode.lean`, a port of
-DigitOtter/godot-vmc-lib (MIT, upstream master 0c1adf8, kept under `godot-vmc-lib/` for
-reference). `guest/vmc/main.cpp` is only the sandbox surface: it holds one Lean state object and
+DigitOtter/godot-vmc-lib (MIT, upstream master 0c1adf8; the upstream tree is not kept here,
+see `UPSTREAM`). `guest/vmc/main.cpp` is only the sandbox surface: it holds one Lean state object and
 calls the decoder's `@[export]` functions.
 
 ## Why the port is split
@@ -44,7 +44,12 @@ Guest ELF:
     PATH=<sysroot>/.pixi/envs/default/bin:$PATH ELAN_TOOLCHAIN=leanprover/lean4:v4.34.1 \
       elixir tools/build.exs
 
-It links a riscv64 Lean core (`LEAN_CORE`, default `~/.cache/lean-guest/v4.34.1`). That cached
+CI (`.github/workflows/guest.yml`) and a clean build use the core built from source:
+`VMC_CMAKE_ARGS="-DLEAN_GUEST_DIR=<interactor-lean-guest checkout>"`. That includes
+`runtime-guest.patch`, so no workaround is needed. It built here in a few minutes and gave a 5.46 MB
+ELF that passes the engine run, its control and the differential run.
+
+The desk shortcut links a riscv64 Lean core (`LEAN_CORE`, default `~/.cache/lean-guest/v4.34.1`). That cached
 core was built before `interactor-lean-guest`'s `runtime-guest.patch` and opens `/dev/urandom`,
 which a sandbox does not have, so Lean's init fails. Until the core is rebuilt from
 `interactor-lean-guest`, apply the patch's `io.cpp` hunk to the runtime's `io.cpp` and pass it:
@@ -64,7 +69,11 @@ service-godot-build, in a scratch project:
 
 ## Open
 
-- No CI workflow and no translated-vs-interpreted check yet, so no shippable ELF.
+- CI builds the ELF and runs a shape gate (`tools/check_elf.exs`, with planted controls), but it
+  cannot run the guest: no release publishes a Linux editor build. The engine run stays manual, and
+  there is no translated-vs-interpreted check yet, so this ELF is not shippable.
 - The tracker mapping onto `XRBodyTracker` and the `mm.elf` query are TODOs.
-- Speed: about 29 us per one-message datagram in the engine, against 6 us for the C++ decoder.
-  That is the interpreter, not binary translation, and it is one message, not a full frame.
+- Speed, Mac interpreter, `tests/engine/frame_vmc.gd` (one frame: 55 bones, a root, 5 trackers, `/T`):
+  Lean about 1.6 ms to feed and 0.2 ms to read back, against about 0.25 ms for the C++ decoder. One
+  run's worst case was 4.8 ms and another's 16.0 ms (the Mac was loaded), and the tick is 15.6 ms.
+  Not measured on the Steam Frame, and not with binary translation.
