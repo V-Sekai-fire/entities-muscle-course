@@ -7,8 +7,13 @@ project(entities_obstacle_course C CXX)
 set(WEFT_ROOT "${CMAKE_SOURCE_DIR}/../.." CACHE PATH "Root of the goal manifest's checkout")
 get_filename_component(WEFT_ROOT "${WEFT_ROOT}" ABSOLUTE)
 set(GUEST_RUNTIME_ROOT ${WEFT_ROOT}/2-contract/guest-runtime CACHE PATH "contract-guest-runtime's checkout")
-# A riscv64 Lean core (libInit.a libStd.a libleanrt.a, gen/include, lean4/src/include) for the same release.
-# The ready-made one is ~/.cache/lean-guest/v4.34.1 (a desk build; CI builds it from interactor-lean-guest).
+# Where the riscv64 Lean core comes from:
+#  - LEAN_GUEST_DIR=<interactor-lean-guest checkout>: build it (runtime with runtime-guest.patch, libuv,
+#    Init's C). This is what CI does; the first build takes about an hour.
+#  - otherwise LEAN_CORE: a ready-made core (libInit.a libStd.a libleanrt.a, gen/include, lean4/src/include)
+#    for the same release, by default ~/.cache/lean-guest/v4.34.1. A desk shortcut: that core predates
+#    runtime-guest.patch, see LEAN_IO_PATCHED below.
+set(LEAN_GUEST_DIR "" CACHE PATH "interactor-lean-guest checkout; builds the Lean core instead of using LEAN_CORE")
 set(LEAN_CORE "$ENV{HOME}/.cache/lean-guest/v4.34.1" CACHE PATH "riscv64 Lean core for lean-toolchain's release")
 set(LIBUV_A "$ENV{HOME}/.cache/lean-guest/libuv-1.48.0/build-rv64/libuv.a" CACHE FILEPATH "riscv64 libuv")
 set(LIBUV_INCLUDE "$ENV{HOME}/.cache/lean-guest/libuv-1.48.0/src/include" CACHE PATH "libuv headers (the runtime's io.cpp includes uv.h)")
@@ -16,13 +21,20 @@ set(GUEST_RUNTIME_GGML OFF CACHE BOOL "" FORCE)
 if(NOT DEFINED GUEST_ELF_DIR)
 	set(GUEST_ELF_DIR ${CMAKE_BINARY_DIR})
 endif()
-foreach(need ${LEAN_CORE}/lib/libInit.a ${LEAN_CORE}/lib/libStd.a ${LEAN_CORE}/lib/libleanrt.a ${LIBUV_A})
-	if(NOT EXISTS ${need})
-		message(FATAL_ERROR "missing ${need}")
-	endif()
-endforeach()
+if(NOT LEAN_GUEST_DIR)
+	foreach(need ${LEAN_CORE}/lib/libInit.a ${LEAN_CORE}/lib/libStd.a ${LEAN_CORE}/lib/libleanrt.a ${LIBUV_A})
+		if(NOT EXISTS ${need})
+			message(FATAL_ERROR "missing ${need}")
+		endif()
+	endforeach()
+endif()
 
 include(${GUEST_RUNTIME_ROOT}/cmake/guest_runtime.cmake)
+if(LEAN_GUEST_DIR)
+	set(LEAN_VERSION "4.34.1" CACHE STRING "must equal lean-toolchain")
+	set(LIBUV_VERSION "1.48.0" CACHE STRING "")
+	include(${LEAN_GUEST_DIR}/cmake/lean_guest.cmake) # leanrt_guest, leaninit_guest, lean headers
+endif()
 
 # The decoder's C, emitted by the host lean. `lake build Vmc.Decode:c` writes .lake/build/ir/Vmc/Decode.c.
 find_program(LAKE_EXE lake REQUIRED NO_CMAKE_FIND_ROOT_PATH)
@@ -47,10 +59,15 @@ if(LEAN_IO_PATCHED)
 	set_source_files_properties(${LEAN_IO_PATCHED} PROPERTIES COMPILE_DEFINITIONS "NDEBUG;LEAN_EXPORTING;LEAN_MULTI_THREAD;LEAN_NO_UV;LEAN_NO_OPENSSL")
 endif()
 add_stage_elf(vmc ${CMAKE_SOURCE_DIR}/guest/vmc/main.cpp ${DECODE_C} ${_extra})
-target_include_directories(vmc PRIVATE ${LEAN_CORE}/gen/include ${LEAN_CORE}/lean4/src/include ${LEAN_CORE}/lean4/src ${LIBUV_INCLUDE})
 target_compile_features(vmc PRIVATE cxx_std_20)
 target_compile_options(vmc PRIVATE -ffp-contract=off -ffunction-sections -fdata-sections)
 target_compile_definitions(vmc PRIVATE LEAN_MULTI_THREAD LEAN_NO_UV LEAN_NO_OPENSSL)
-# add_sandbox_program adds no --gc-sections, and the Lean core is large without it.
-target_link_libraries(vmc PRIVATE -Wl,--gc-sections -Wl,--start-group ${LEAN_CORE}/lib/libInit.a
-	${LEAN_CORE}/lib/libStd.a ${LEAN_CORE}/lib/libleanrt.a ${LIBUV_A} -Wl,--end-group pthread)
+if(LEAN_GUEST_DIR)
+	# leaninit_guest links leanrt_guest and exports the include paths.
+	target_link_libraries(vmc PRIVATE -Wl,--gc-sections leaninit_guest pthread)
+else()
+	target_include_directories(vmc PRIVATE ${LEAN_CORE}/gen/include ${LEAN_CORE}/lean4/src/include ${LEAN_CORE}/lean4/src ${LIBUV_INCLUDE})
+	# add_sandbox_program adds no --gc-sections, and the Lean core is large without it.
+	target_link_libraries(vmc PRIVATE -Wl,--gc-sections -Wl,--start-group ${LEAN_CORE}/lib/libInit.a
+		${LEAN_CORE}/lib/libStd.a ${LEAN_CORE}/lib/libleanrt.a ${LIBUV_A} -Wl,--end-group pthread)
+endif()
