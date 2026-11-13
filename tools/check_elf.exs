@@ -26,10 +26,39 @@ defmodule Check do
     Enum.any?(hits, &(&1 == <<want::little-32>>)) || fail("#{path}: no SBXV marker of size #{want} (found #{inspect(hits)})")
     other = if want == 40, do: 24, else: 40
     Enum.any?(hits, &(&1 == <<other::little-32>>)) && fail("#{path}: also carries a size #{other} marker")
-    {out, 0} = System.cmd("llvm-readelf", ["-s", "--wide", path])
-    missing = Enum.reject(@exports, &Regex.match?(~r/\sGLOBAL\s+DEFAULT\s+\d+\s#{&1}$/m, out))
+    exported = global_funcs(bin)
+    missing = Enum.reject(@exports, &MapSet.member?(exported, &1))
     missing == [] || fail("#{path}: missing Lean exports #{inspect(missing)}")
     IO.puts("OK #{path}: ET_EXEC EM_RISCV, SBXV size #{want}, #{length(@exports)} Lean exports")
+  end
+
+  # GLOBAL FUNC names from .symtab, read from the ELF64 section headers (no llvm-readelf on the runner).
+  # `--strip-debug` keeps .symtab; `--strip-all` would empty it and the host could not resolve a symbol.
+  defp global_funcs(bin) do
+    <<_::binary-size(40), shoff::little-64, _::binary-size(10), shentsize::little-16, shnum::little-16, _::binary>> = bin
+    sections =
+      for i <- 0..(shnum - 1) do
+        <<_::binary-size(4), type::little-32, _::binary-size(16), off::little-64, size::little-64, link::little-32,
+          _::binary>> = binary_part(bin, shoff + i * shentsize, shentsize)
+        {type, off, size, link}
+      end
+
+    case Enum.find(sections, fn {type, _, _, _} -> type == 2 end) do
+      nil ->
+        fail("no .symtab: the ELF was stripped with --strip-all")
+
+      {_, off, size, link} ->
+        {_, stroff, strsize, _} = Enum.at(sections, link)
+        strtab = binary_part(bin, stroff, strsize)
+
+        for <<name::little-32, info::8, _other::8, _shndx::little-16, _value::little-64, _sz::little-64 <-
+                binary_part(bin, off, size)>>,
+            info == 0x12,
+            into: MapSet.new() do
+          [str | _] = :binary.split(binary_part(strtab, name, strsize - name), <<0>>)
+          str
+        end
+    end
   end
 
   defp fail(msg) do
