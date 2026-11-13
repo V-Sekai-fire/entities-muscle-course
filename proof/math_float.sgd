@@ -1,0 +1,64 @@
+func nop(a: PackedFloat64Array) -> int:
+	return 0
+
+
+func quat_mul(a: PackedFloat64Array) -> PackedFloat64Array:
+	var out: PackedFloat64Array = PackedFloat64Array()
+	out.resize(4)
+	var aw: float = a[0]
+	var ax: float = a[1]
+	var ay: float = a[2]
+	var az: float = a[3]
+	var bw: float = a[4]
+	var bx: float = a[5]
+	var by: float = a[6]
+	var bz: float = a[7]
+	out[0] = aw * bw - ax * bx - ay * by - az * bz
+	out[1] = aw * bx + ax * bw + ay * bz - az * by
+	out[2] = aw * by - ax * bz + ay * bw + az * bx
+	out[3] = aw * bz + ax * by - ay * bx + az * bw
+	return out
+
+
+func chain(a: PackedFloat64Array, n: int) -> PackedFloat64Array:
+	var out: PackedFloat64Array = PackedFloat64Array()
+	out.resize(4)
+	var aw: float = a[0]
+	var ax: float = a[1]
+	var ay: float = a[2]
+	var az: float = a[3]
+	var bw: float = a[4]
+	var bx: float = a[5]
+	var by: float = a[6]
+	var bz: float = a[7]
+	for i in n:
+		var w: float = aw * bw - ax * bx - ay * by - az * bz
+		var x: float = aw * bx + ax * bw + ay * bz - az * by
+		var y: float = aw * by - ax * bz + ay * bw + az * bx
+		var z: float = aw * bz + ax * by - ay * bx + az * bw
+		var len: float = sqrt(w * w + x * x + y * y + z * z)
+		aw = w / len
+		ax = x / len
+		ay = y / len
+		az = z / len
+	out[0] = aw
+	out[1] = ax
+	out[2] = ay
+	out[3] = az
+	return out
+
+
+func packed_sum(a: PackedFloat64Array, n: int) -> float:
+	var s: float = 0.0
+	var m: int = a.size()
+	for i in n:
+		s += a[i % m]
+	return s
+
+
+func packed_fill(n: int) -> PackedFloat64Array:
+	var out: PackedFloat64Array = PackedFloat64Array()
+	out.resize(n)
+	for i in n:
+		out[i] = float(i) * 0.5
+	return out

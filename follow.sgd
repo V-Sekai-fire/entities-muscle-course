@@ -1,0 +1,143 @@
+## Explained in docs/follow.md.
+const ROW: int = 6
+const PLACE: int = 7
+
+var ready: bool = false
+var parent: PackedInt32Array = PackedInt32Array()
+var driver: PackedInt32Array = PackedInt32Array()
+var pre: Array = []
+var offset: Array = []
+var zero_inv: Array = []
+var body_count: int = 0
+var hip_a: int = -1
+var hip_b: int = -1
+var femur_a: int = -1
+var femur_b: int = -1
+
+
+func _at(t: PackedFloat64Array, o: int) -> Vector3:
+	return Vector3(t[o + 1], t[o + 2], t[o])
+
+
+func _turn(t: PackedFloat64Array, o: int) -> Quaternion:
+	return Quaternion(t[o + 5], t[o + 6], t[o + 4], t[o + 3])
+
+
+func setup(parents: PackedInt32Array, rest: PackedFloat64Array, drive: PackedInt32Array, zero: PackedFloat64Array, hips: PackedInt32Array) -> int:
+	ready = false
+	var n: int = parents.size()
+	var m: int = zero.size() / PLACE
+	if n == 0 or rest.size() != n * PLACE:
+		return -1
+	if m == 0 or zero.size() != m * PLACE:
+		return -2
+	if drive.size() % ROW != 0 or hips.size() != 4:
+		return -3
+	if hips[0] < 0 or hips[0] >= n or hips[1] < 0 or hips[1] >= n or hips[2] < 0 or hips[2] >= m or hips[3] < 0 or hips[3] >= m:
+		return -4
+	var head: Array = []
+	var rot: Array = []
+	for c in n:
+		var o: int = c * PLACE
+		if parents[c] >= c or (c == 0) != (parents[c] < 0):
+			return -5
+		head.append(Vector3(rest[o], rest[o + 1], rest[o + 2]))
+		rot.append(Quaternion(rest[o + 3], rest[o + 4], rest[o + 5], rest[o + 6]))
+	var new_pre: Array = []
+	var new_offset: Array = []
+	var new_driver: PackedInt32Array = PackedInt32Array()
+	new_driver.resize(n)
+	for c in n:
+		var p: int = parents[c]
+		new_driver[c] = -1
+		if p < 0:
+			new_pre.append(rot[c])
+			new_offset.append(head[c])
+		else:
+			var inv: Quaternion = rot[p].inverse()
+			var from_parent: Vector3 = head[c] - head[p]
+			new_pre.append(inv * rot[c])
+			new_offset.append(inv * from_parent)
+	var new_zero: Array = []
+	for b in m:
+		new_zero.append(_turn(zero, b * PLACE).inverse())
+	var rows: int = drive.size() / ROW
+	for r in rows:
+		var k: int = r * ROW
+		var c: int = drive[k]
+		var b: int = drive[k + 1]
+		if c < 0 or c >= n or b < 0 or b >= m or new_driver[c] != -1:
+			return -6
+		new_driver[c] = b
+		var bone_from: int = drive[k + 2]
+		if bone_from < 0:
+			new_pre[c] = rot[c]
+		else:
+			var bone_to: int = drive[k + 3]
+			var body_from: int = drive[k + 4]
+			var body_to: int = drive[k + 5]
+			if bone_from >= n or bone_to < 0 or bone_to >= n or body_from < 0 or body_from >= m or body_to < 0 or body_to >= m:
+				return -7
+			var ours: Vector3 = head[bone_to] - head[bone_from]
+			var theirs: Vector3 = _at(zero, body_to * PLACE) - _at(zero, body_from * PLACE)
+			if ours.length() < 1e-9 or theirs.length() < 1e-9:
+				return -8
+			ours = ours.normalized()
+			theirs = theirs.normalized()
+			var cosine: float = ours.dot(theirs)
+			if cosine < -0.999999:
+				return -9
+			var axis: Vector3 = ours.cross(theirs)
+			var align: Quaternion = Quaternion(axis.x, axis.y, axis.z, 1.0 + cosine).normalized()
+			new_pre[c] = align * rot[c]
+	parent = parents
+	driver = new_driver
+	pre = new_pre
+	offset = new_offset
+	zero_inv = new_zero
+	body_count = m
+	hip_a = hips[0]
+	hip_b = hips[1]
+	femur_a = hips[2]
+	femur_b = hips[3]
+	ready = true
+	return 0
+
+
+func pose(bodies: PackedFloat64Array) -> PackedFloat64Array:
+	var out: PackedFloat64Array = PackedFloat64Array()
+	if not ready or bodies.size() != body_count * PLACE:
+		return out
+	var n: int = parent.size()
+	out.resize(n * 4 + 3)
+	var world: Array = []
+	var head: Array = []
+	for c in n:
+		var p: int = parent[c]
+		var b: int = driver[c]
+		var w: Quaternion = pre[c]
+		if b >= 0:
+			var delta: Quaternion = _turn(bodies, b * PLACE) * zero_inv[b]
+			w = delta * w
+		elif p >= 0:
+			w = world[p] * w
+		var local: Quaternion = w
+		var at: Vector3 = offset[c]
+		if p >= 0:
+			var above: Quaternion = world[p]
+			local = above.inverse() * w
+			at = head[p] + above * at
+		world.append(w)
+		head.append(at)
+		var o: int = c * 4
+		out[o] = local.x
+		out[o + 1] = local.y
+		out[o + 2] = local.z
+		out[o + 3] = local.w
+	var ours: Vector3 = (head[hip_a] + head[hip_b]) * 0.5
+	var theirs: Vector3 = (_at(bodies, femur_a * PLACE) + _at(bodies, femur_b * PLACE)) * 0.5
+	var root_at: Vector3 = head[0] + theirs - ours
+	out[n * 4] = root_at.x
+	out[n * 4 + 1] = root_at.y
+	out[n * 4 + 2] = root_at.z
+	return out

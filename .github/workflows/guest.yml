@@ -83,7 +83,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/rv64
-          key: lean-core-${{ env.LEAN_TOOLCHAIN }}-${{ hashFiles('siblings.txt', 'CMakeLists.txt', 'lean-toolchain') }}
+          key: lean-core-${{ github.event.repository.name }}-${{ env.LEAN_TOOLCHAIN }}-${{ hashFiles('siblings.txt', 'CMakeLists.txt', 'lean-toolchain') }}
       - name: Build vmc.elf
         env:
           WEFT_ROOT: ${{ github.workspace }}/weft
